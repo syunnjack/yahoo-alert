@@ -1,0 +1,13 @@
+{
+  "_note": "seller は商品URLの store.shopping.yahoo.co.jp/<ここ>/ の部分。",
+  "sites": [
+    {
+      "name": "見本（あとで自分の店に置き換える）",
+      "seller": "mura",
+      "keywords": [
+        "財布 メンズ",
+        "二つ折り財布"
+      ]
+    }
+  ]
+}
