@@ -88,6 +88,35 @@ def fetch(url, tries=4, wait=5.0):
     return None
 
 
+# **この語が題名に入っている商品は、集計から外す。**
+# 売れ筋順で取ると「童貞を殺すセーター」「ランジェリー・下着」のような
+# 成人向け寄りの商品が混ざる（2026-09-25 に実測）。
+# halloween-event.com は一般向けのサイトで、アダルト判定されると
+# 楽天・バリューコマース経由 Yahoo! のアフィリエイトが使えなくなる。
+# **相場を出す目的から見ても、これらは衣装の値段ではない。**
+NG_WORDS = [
+    '童貞', 'ランジェリー', '下着', 'セクシー', 'エロ', 'アダルト', '過激',
+    '透け', 'ベビードール', 'Tバック', 'ガーター', '勝負下着', '夜用',
+    'ボンテージ', 'ボンデージ', '大人のおもちゃ', '18禁', 'R18',
+]
+
+# 衣装ではなく小物だけが並ぶ種類を落とすための語。
+# **カチューシャや付け爪は「衣装の相場」ではない。**
+ACCESSORY_ONLY = ['カチューシャ', '付け爪', 'ネイル', 'ピアス', 'イヤリング',
+                  'ウィッグ', 'カラコン', 'マスクのみ']
+
+# 総件数がこれ未満の種類は、相場として出さない。
+MIN_TOTAL = 300
+
+
+def is_ng(name):
+    return any(w in name for w in NG_WORDS)
+
+
+def is_accessory(name):
+    return any(w in name for w in ACCESSORY_ONLY) and '衣装' not in name
+
+
 def band(price):
     for limit, label in [(1000, '〜999円'), (2000, '1,000〜1,999円'),
                          (3000, '2,000〜2,999円'), (5000, '3,000〜4,999円'),
@@ -123,23 +152,45 @@ def main():
             continue
 
         hits = payload.get('hits') or []
-        prices = sorted(int(h['price']) for h in hits if h.get('price'))
-        if not prices:
-            print(f'{name}: 0件。飛ばします。', file=sys.stderr)
+        total = int(payload.get('totalResultsAvailable') or 0)
+
+        # **総件数が少ない種類は相場にならない。** ミイラは52件しか無く、
+        # 中身もカチューシャばかりだった。
+        if total < MIN_TOTAL:
+            print(f'{name}: 総件数 {total}件。少ないので出しません。', file=sys.stderr)
             continue
+
+        kept, dropped = [], 0
+        for h in hits:
+            nm = h.get('name') or ''
+            if not h.get('price'):
+                continue
+            if is_ng(nm) or is_accessory(nm):
+                dropped += 1
+                continue
+            kept.append(h)
+
+        prices = sorted(int(h['price']) for h in kept)
+        # 半分以上落ちる種類は、そもそも衣装の棚ではない。
+        if len(prices) < 20:
+            print(f'{name}: 除外後 {len(prices)}件。少ないので出しません。', file=sys.stderr)
+            continue
+        if dropped:
+            print(f'{name}: {dropped}件を除外しました。', file=sys.stderr)
 
         bands = {}
         for p in prices:
             bands[band(p)] = bands.get(band(p), 0) + 1
-        stores = {(h.get('seller') or {}).get('name') for h in hits if h.get('seller')}
+        stores = {(h.get('seller') or {}).get('name') for h in kept if h.get('seller')}
 
         out['types'].append({
             'slug': slug, 'name': name, 'keyword': keyword,
-            'total': int(payload.get('totalResultsAvailable') or 0),
+            'total': total,
             'sampled': len(prices),
+            'dropped': dropped,
             # **中身を必ず残す。** 数字だけ見ていると、衣装でないものが
             # 混ざっていても気づけない。公開前に目で確かめるための控え。
-            'examples': [h.get('name', '')[:60] for h in hits[:5]],
+            'examples': [h.get('name', '')[:60] for h in kept[:5]],
             'min': prices[0], 'median': int(statistics.median(prices)), 'max': prices[-1],
             'bands': bands,
             'stores': len([s for s in stores if s]),
