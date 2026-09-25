@@ -178,6 +178,15 @@ def main():
         if dropped:
             print(f'{name}: {dropped}件を除外しました。', file=sys.stderr)
 
+        # 中央値にいちばん近い3件を選ぶ
+        mid = statistics.median(prices)
+        picks = [{
+            'name': h.get('name', '')[:70],
+            'price': int(h['price']),
+            'url': h.get('url', ''),
+            'store': (h.get('seller') or {}).get('name', '')[:30],
+        } for h in sorted(kept, key=lambda x: abs(int(x['price']) - mid))[:3]]
+
         bands = {}
         for p in prices:
             bands[band(p)] = bands.get(band(p), 0) + 1
@@ -191,6 +200,9 @@ def main():
             # **中身を必ず残す。** 数字だけ見ていると、衣装でないものが
             # 混ざっていても気づけない。公開前に目で確かめるための控え。
             'examples': [h.get('name', '')[:60] for h in kept[:5]],
+            # **中央値に近い3件を代表として残す。** 最安や最高は外れ値で、
+            # 「その種類の普通の衣装」を示さない。リンクの単位は商品ページ。
+            'picks': picks,
             'min': prices[0], 'median': int(statistics.median(prices)), 'max': prices[-1],
             'bands': bands,
             'stores': len([s for s in stores if s]),
