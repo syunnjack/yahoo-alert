@@ -1,0 +1,151 @@
+# -*- coding: utf-8 -*-
+"""Yahoo!ショッピングから、コスプレ衣装の相場データを取る。
+
+## なぜ yahoo-alert に置くか
+
+**`YAHOO_APP_ID` がこのリポジトリの Secrets にしか無い。** 鍵を移さずに使うため、
+取得だけをここで走らせて、結果の JSON をコミットする。
+使う側（halloween-event.com）は、その JSON を読むだけにする。
+
+## 何を出すか
+
+**商品1件ずつのページは作らない。** 作ると数千ページになり、
+darekore.jp と同じ「発見済み-未登録」になる。出すのは**衣装の種類ごとの数字**。
+
+    件数 / 価格の最小・中央・最大 / 価格帯ごとの件数 / 店舗数
+
+「売れ筋順」は Yahoo の公式ランキングではない。**「公式ランキング1位」とは書かない**
+（景表法の優良誤認）。ここでは順位を使わず、**価格の分布だけ**を出す。
+
+## 上限
+
+appid は1日に上限がある（35分・2,000件強で429）。
+1種類につき1リクエスト、**15種類で15リクエスト**に抑える。
+
+使い方: YAHOO_APP_ID=... python scripts/fetch_costume.py
+"""
+import json
+import os
+import statistics
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date, timezone, timedelta
+
+ENDPOINT = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   'data', 'costume.json')
+PAUSE = 1.5
+RESULTS = 50          # 1リクエストで取れる上限
+JST = timezone(timedelta(hours=9))
+
+# halloween-event.com に既にある衣装の記事と対応させる。
+# **記事が無い種類は足さない。** 受け皿の無いデータを作らない。
+TYPES = [
+    ('majo-cosplay',     '魔女',         'ハロウィン 魔女 コスプレ 衣装'),
+    ('vampire-cosplay',  'ヴァンパイア',  'ハロウィン ヴァンパイア コスプレ 衣装'),
+    ('zombie-cosplay',   'ゾンビ',       'ハロウィン ゾンビ コスプレ 衣装'),
+    ('nurse-cosplay',    'ナース',       'ナース コスプレ 衣装'),
+    ('police-cosplay',   'ポリス',       'ポリス コスプレ 衣装'),
+    ('china-cosplay',    'チャイナ',      'チャイナ服 コスプレ 衣装'),
+    ('maid-cosplay',     'メイド',       'メイド服 コスプレ 衣装'),
+    ('gothloli-cosplay', 'ゴスロリ',      'ゴシックロリータ 衣装'),
+    ('tenshi-cosplay',   '天使',         '天使 コスプレ 衣装'),
+    ('akuma-cosplay',    '悪魔',         '悪魔 コスプレ 衣装'),
+    ('shinigami-cosplay', '死神',        '死神 コスプレ 衣装'),
+    ('pierrot-cosplay',  'ピエロ',       'ピエロ コスプレ 衣装'),
+    ('miira-cosplay',    'ミイラ',       'ミイラ コスプレ 衣装'),
+    ('kuroneko-cosplay', '黒猫',         '黒猫 コスプレ 衣装'),
+    ('pumpkin-cosplay',  'かぼちゃ',      'かぼちゃ コスプレ 衣装'),
+]
+
+
+def fetch(url, tries=4, wait=5.0):
+    for attempt in range(tries):
+        try:
+            request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as error:
+            # 429 は上限。待っても復帰しないことがあるので、そこで止める。
+            if error.code == 429:
+                print('  429（1日の上限）。ここで止めます。', file=sys.stderr)
+                return None
+            if attempt == tries - 1:
+                print(f'  HTTP {error.code}', file=sys.stderr)
+                return None
+        except Exception as error:
+            if attempt == tries - 1:
+                print(f'  {error}', file=sys.stderr)
+                return None
+        time.sleep(wait)
+    return None
+
+
+def band(price):
+    for limit, label in [(1000, '〜999円'), (2000, '1,000〜1,999円'),
+                         (3000, '2,000〜2,999円'), (5000, '3,000〜4,999円'),
+                         (10000, '5,000〜9,999円')]:
+        if price < limit:
+            return label
+    return '10,000円〜'
+
+
+def main():
+    app_id = os.environ.get('YAHOO_APP_ID', '').strip()
+    if not app_id:
+        print('YAHOO_APP_ID が要ります。', file=sys.stderr)
+        return 1
+
+    out = {'updated': date.today().isoformat(), 'source': 'Yahoo!ショッピング 商品検索API v3',
+           'types': []}
+
+    for slug, name, keyword in TYPES:
+        query = urllib.parse.urlencode({
+            'appid': app_id, 'query': keyword, 'results': RESULTS,
+            'in_stock': 'true', 'sort': '+price',
+        })
+        payload = fetch(f'{ENDPOINT}?{query}')
+        time.sleep(PAUSE)
+
+        # **応答が無いときは、その種類を飛ばす。** 0件として書かない。
+        if not payload:
+            print(f'{name}: 応答なし。飛ばします。', file=sys.stderr)
+            continue
+
+        hits = payload.get('hits') or []
+        prices = sorted(int(h['price']) for h in hits if h.get('price'))
+        if not prices:
+            print(f'{name}: 0件。飛ばします。', file=sys.stderr)
+            continue
+
+        bands = {}
+        for p in prices:
+            bands[band(p)] = bands.get(band(p), 0) + 1
+        stores = {(h.get('seller') or {}).get('name') for h in hits if h.get('seller')}
+
+        out['types'].append({
+            'slug': slug, 'name': name, 'keyword': keyword,
+            'total': int(payload.get('totalResultsAvailable') or 0),
+            'sampled': len(prices),
+            'min': prices[0], 'median': int(statistics.median(prices)), 'max': prices[-1],
+            'bands': bands,
+            'stores': len([s for s in stores if s]),
+        })
+        print(f'{name}: {len(prices)}件 {prices[0]}〜{prices[-1]}円', file=sys.stderr)
+
+    if not out['types']:
+        print('1件も取れませんでした。ファイルを書き換えません。', file=sys.stderr)
+        return 1
+
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=1)
+    print(f'{len(out["types"])} 種類を書き出しました。', file=sys.stderr)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

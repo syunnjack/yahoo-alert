@@ -1,0 +1,41 @@
+name: コスプレ衣装の相場を取る
+
+# **鍵をこのリポジトリから出さないための仕組み。**
+# YAHOO_APP_ID は Secrets にしか無いので、取得だけをここで走らせ、
+# 結果の JSON（data/costume.json）をコミットする。
+# 使う側（halloween-event.com）は、その JSON を読むだけにする。
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 毎月1日 04:00 JST。価格は毎日は動かないので、月1回でよい。
+    - cron: '0 19 1 * *'
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 取得
+        env:
+          YAHOO_APP_ID: ${{ secrets.YAHOO_APP_ID }}
+        run: python scripts/fetch_costume.py
+
+      - name: 変わったときだけコミットする
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- data/costume.json; then
+            echo "変わっていないのでコミットしません。"
+          else
+            git add data/costume.json
+            git commit -m "コスプレ衣装の相場を取り直す"
+            git push
+          fi
