@@ -14,8 +14,12 @@ darekore.jp と同じ「発見済み-未登録」になる。出すのは**衣�
 
     件数 / 価格の最小・中央・最大 / 価格帯ごとの件数 / 店舗数
 
-「売れ筋順」は Yahoo の公式ランキングではない。**「公式ランキング1位」とは書かない**
-（景表法の優良誤認）。ここでは順位を使わず、**価格の分布だけ**を出す。
+取得は売れ筋順（`sort=-sold`）。**これは Yahoo の公式ランキングではない**ので、
+「公式ランキング◯位」とは書かない（景表法の優良誤認）。
+**順位は出さず、価格の分布だけ**を出す。
+
+安い順（`+price`）にすると、最安50件が小物やパーツになり、相場が実態とずれる
+（2026-09-25 に実測。メイド服の最安が15円になった）。
 
 ## 上限
 
@@ -105,7 +109,10 @@ def main():
     for slug, name, keyword in TYPES:
         query = urllib.parse.urlencode({
             'appid': app_id, 'query': keyword, 'results': RESULTS,
-            'in_stock': 'true', 'sort': '+price',
+            # **`+price`（安い順）は使わない。** 最安50件は衣装ではなく
+            # 小物やパーツが並び、相場が実態とかけ離れる（メイド15円など）。
+            # 売れ筋順にすると、実際に衣装として買われているものが取れる。
+            'in_stock': 'true', 'sort': '-sold',
         })
         payload = fetch(f'{ENDPOINT}?{query}')
         time.sleep(PAUSE)
@@ -130,6 +137,9 @@ def main():
             'slug': slug, 'name': name, 'keyword': keyword,
             'total': int(payload.get('totalResultsAvailable') or 0),
             'sampled': len(prices),
+            # **中身を必ず残す。** 数字だけ見ていると、衣装でないものが
+            # 混ざっていても気づけない。公開前に目で確かめるための控え。
+            'examples': [h.get('name', '')[:60] for h in hits[:5]],
             'min': prices[0], 'median': int(statistics.median(prices)), 'max': prices[-1],
             'bands': bands,
             'stores': len([s for s in stores if s]),
