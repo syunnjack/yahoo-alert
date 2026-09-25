@@ -8,8 +8,9 @@ name: コスプレ衣装の相場を取る
 on:
   workflow_dispatch:
   schedule:
-    # 毎月1日 04:00 JST。価格は毎日は動かないので、月1回でよい。
-    - cron: '0 19 1 * *'
+    # 毎週月曜 04:00 JST。サーバー側の cron（05:00 JST）より前に走らせる。
+    # **順番が逆だと、記事が1週間古い値のままになる。**
+    - cron: '0 19 * * 0'
 
 permissions:
   contents: write
