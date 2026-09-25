@@ -32,10 +32,13 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- data/costume.json; then
+          git add data/costume.json
+          # **`git diff --quiet` は未追跡ファイルを見ない。**
+          # 初回は「変わっていない」と判定され、永久にコミットされなかった。
+          # add してから --cached で見る。
+          if git diff --cached --quiet -- data/costume.json; then
             echo "変わっていないのでコミットしません。"
           else
-            git add data/costume.json
             git commit -m "コスプレ衣装の相場を取り直す"
             git push
           fi
